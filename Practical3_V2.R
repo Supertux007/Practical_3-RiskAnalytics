@@ -69,11 +69,38 @@ ggAcf(diff(daily_max_delay_ts))
 # Is diff enough ?
 # From the plot, most autocorrelations are within the blue confidence bands, which suggests the differenced series is likely stationary.
 
+# Creation of Model
+# GEV model
+
+# Store the stationnary time series
+diff_stationary <- diff(daily_max_delay_ts)
+# plot to check
+plot(diff_stationary, type = "l", main = "Differenced Stationary Series")
+
+# Store it into a dataframe
+diff_df <- data.frame(
+  FL_DATE = daily_max_delay$FL_DATE[-1],  # Adjust for one less observation after differencing
+  diff_delay = diff_stationary
+)
+
+library(ismev)
+# use a GEV model with th fevd function
+
+diff_df <- diff_df[!is.na(diff_df$diff_delay) & !is.infinite(diff_df$diff_delay), ]
+
+mod_gev <- fevd(daily_max_delay$max_delay, type = "GEV", time.units = "days")
+summary(mod_gev)
+mod_gev$results$par
+
+# Compute return levels for specified return periods
+return_levels <- return.level(mod_gev, return.period = c(10, 100, 1000),period="days")
+print(return_levels)
 
 
 
 
 
+# GP model (POT - peak over the threshold)
 
 
 

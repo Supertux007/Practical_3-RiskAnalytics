@@ -15,7 +15,7 @@ american_airlines_data <- read.csv(here::here("flights_sample_3m_filtered.csv"))
 # Convert the date in a date format
 american_airlines_data$DATE <- as.Date(american_airlines_data$FL_DATE, format = "%Y-%m-%d")
 
-# Calculate mean delay per day
+# Calculate mean de parture delay per day
 daily_mean_delay <- american_airlines_data %>%
   group_by(FL_DATE) %>%
   summarise(mean_delay = mean(DEP_DELAY, na.rm = TRUE))
@@ -26,24 +26,49 @@ daily_mean_delay_ts <- ts(daily_mean_delay$mean_delay, frequency = 365)
 # Modify the type of date as a date object
 #daily_mean_delay_ts$FL_DATE <- as.Date(daily_mean_delay$FL_DATE) 
 
-# Visualization of the time series
+# Visualization of the time series (Change the legend y axis and values x axis)
+# Observation of seasonality lower between 2 and 3, higher after that with peak at 5
+# Observation of paterns : not obvious
+# Delays are more concentrated around the lower range (0–25 minutes) for most days
+# Peak at 5 (see what it means in date to give an explanation)
 autoplot(daily_mean_delay_ts)
 
 
 # Check for seasonality
 # clear seasonal pattern and trend 
+# We use a yearly seasonality for each color (need to modify to 20XX)
+# No regular patern so delay may be influenced by episodic and not regular events (need to see for each year)
+# year 2 is lower (Covid)
+# Year 5 peak at start of the year , need to find date
+# try to link with Cause of delay in other columns 
 ggseasonplot(daily_mean_delay_ts, year.labels = TRUE, year.labels.left = TRUE)
 ggseasonplot(daily_mean_delay_ts)
 
 
 # Combination of trended and seasonal effects
+# The ACF values decrease gradually with increasing lag, the series has a long-term autocorrelation structure.
+#There are significant positive correlations for almost all the lags within the 50-lag window, 
+# suggesting the series has a persistent structure or trend.
+# The slow decay of the ACF indicates a trend in the data,
+# The absence of regular sharp spikes at specific lags suggests that any seasonality in the data is not strong or is overshadowed by the trend
+# Statistically significant exceeds the blue dashed bars
 ggAcf(daily_mean_delay_ts, lag=50)
 
 ## Stationarity, trend and seasonality, t.windows = 5
-autoplot(stl(daily_mean_delay_ts, t.window=5, s.window="periodic")) 
+# Trend lowering around second /5 of the time but upwards rest of the time
+# Clear periodic fluctuations , summer peaks then down after, seasonal pattern
+# remainder (no clear pattern but some spikes, why ?) suggest one-off disruptions or anomalies 
+#that are not explained by trend or seasonality
+# ?grey bar on the left,  represents how much variation but ot clear on full data, need explanation
+autoplot(stl(daily_mean_delay_ts, t.window=18, s.window="periodic")) 
 
 
+#STL decomposition
 # to obtain the components, use seasonal() or trendcycle(), e.g. 
+# Need better timeline and legends
+# extraction of seasonality only
+# periodic patterns repeating over time
+# predictability with seasonality
 seasonal(stl(daily_mean_delay_ts, t.window=5, s.window="periodic"))
 plot(seasonal(stl(daily_mean_delay_ts, t.window=5, s.window="periodic")))
 # During summer we an increase of flights
@@ -52,19 +77,39 @@ plot(seasonal(stl(daily_mean_delay_ts, t.window=5, s.window="periodic")))
 ## ARIMA models 
 
 # first, differencing is possible using diff()
-# this stabilises the mean of the series, whereas logarithms stabilise the variance. 
-autoplot(daily_mean_delay_ts) # clear trend pattern 
+# clear trend pattern 
+autoplot(daily_mean_delay_ts) 
+# trend removal 
+# The differenced series oscillates around zero
+# Some spikes (e.g., around time point 5)
 autoplot(diff(daily_mean_delay_ts)) 
+# decreases gradually over many lags, showing a long-term dependence in the series.
+# significant autocorrelation (bars outside the blue)
+# This indicates that values in the time series are correlated with their past values 
+#over extended periods, further confirming non-stationarity
 ggAcf(daily_mean_delay_ts)
+# this stabilises the mean of the series, whereas logarithms stabilise the variance. 
+# Majority of lines are inside the interval
+# Why is lag 1 so big ?
+# the differenced series appears stationary, good
 ggAcf(diff(daily_mean_delay_ts))
+ 
 
 
 # for the log
+# can delete already done
 autoplot(daily_mean_delay_ts)
 ggAcf(daily_mean_delay_ts)
-autoplot(log(daily_mean_delay_ts)) #variance is smaller, yet trend and seasonality still here
+
+#Autocorrelation variance controlled with log
+# The ACF gradually decreases across lags rather than dropping off sharply. This is a clear sign of non-stationarity, 
+# likely caused by a trend in the series
+# negative around lag 100 - could suggest cyclic or seasonal behavior
+# spikes near lag 200, recurring events like holidays seasonal effect 
+# Negative values are due to yearly seasonality ?
 ggAcf(log(daily_mean_delay_ts))
 
+autoplot(log(daily_mean_delay_ts)) #variance is smaller, yet trend and seasonality still here
 ggAcf(diff(daily_mean_delay_ts)) #differencing is not enough...
 
 ggAcf(diff(log(daily_mean_delay_ts), 12)) #sometimes, still not enough... 
@@ -73,12 +118,14 @@ autoplot(diff(diff(log(daily_mean_delay_ts), 12), 1))
 autoplot(log(daily_mean_delay_ts)) #but much better in terms of stationarity...
 
 
+# check values log like -5859
 auto.mod <-auto.arima(daily_mean_delay_ts)
 auto.mod
 
 # Plot the residual
 autoplot(auto.mod$residuals)
-
+# same peak at lag1
+#The significant spikes at lag 1 and 2 in the PACF confirm the use of two AR terms ?
 ggPacf(daily_mean_delay_ts)
 
 
@@ -87,10 +134,20 @@ ggPacf(daily_mean_delay_ts)
 library(DescTools)
 AndersonDarlingTest(auto.mod$residuals, null = "pnorm") 
 # Really small p-value
+# A significant result (p-value < 0.05) indicates that the residuals deviate from normality.
 
 
 library(cmstatr)
 anderson_darling_normal(x = auto.mod$residuals)
+# The residuals appear to fluctuate randomly around zero, with no obvious patterns or trends. 
+#This indicates that the ARIMA model has captured most of the structure in the data.
+# spike around 5
+
+# Most of the bars fall within the 95% confidence intervals (blue dashed lines), 
+#indicating that the residuals have no significant autocorrelation.
+
+#The histogram shows that the residuals are roughly symmetrically distributed around zero.
+
 checkresiduals(auto.mod) # can also use a built-in function
 
 

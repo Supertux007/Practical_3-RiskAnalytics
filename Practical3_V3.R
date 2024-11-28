@@ -54,6 +54,10 @@ AIC(fit_norm)
 AIC(fit_gamma)
 
 # gamma distribution fits the best our data on AIC and BIC it's very closed form the normal distribution
+# If it fits a gamma distribution it means that can capture skewed or extreme risks.
+
+
+
 
 # Create a new column with Year and Week Number
 daily_max_delay$Year_weekNum <- paste(
@@ -277,7 +281,6 @@ ggplot(data, aes(x = Date, y = Precipitation)) +
 
 
 
-
 # Remove Trend 
 diff_series <- diff(daily_max_delay_ts)
 autoplot(diff_series) + 
@@ -321,5 +324,8 @@ residuals_plot <- autoplot(residuals_series) +
   ylab("Residual Maximum Delay")
 
 grid.arrange(original_plot, residuals_plot, ncol = 1)
+
+
+
 
 

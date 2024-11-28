@@ -276,3 +276,50 @@ ggplot(data, aes(x = Date, y = Precipitation)) +
   theme_minimal()
 
 
+
+
+# Remove Trend 
+diff_series <- diff(daily_max_delay_ts)
+autoplot(diff_series) + 
+  ggtitle("Differenced Series (Trend Removed)") +
+  xlab("Time") + 
+  ylab("Differenced Maximum Delay")
+
+
+# Remove Seasonality
+stl_result <- stl(daily_max_delay_ts, t.window = 18, s.window = "periodic")
+autoplot(stl_result) + ggtitle("STL Decomposition")
+deseasonalized_series <- daily_max_delay_ts - stl_result$time.series[, "seasonal"]
+autoplot(deseasonalized_series) + 
+  ggtitle("Deseasonalized Series") +
+  xlab("Time") + 
+  ylab("Deseasonalized Maximum Delay")
+
+
+# Perform STL Decomposition
+stl_result <- stl(daily_max_delay_ts, t.window = 18, s.window = "periodic")
+
+# Extract Residuals (Remainder Component)
+residuals_series <- stl_result$time.series[, "remainder"]
+
+# Plot the Residuals
+autoplot(residuals_series) + 
+  ggtitle("Residuals (Trend and Seasonality Removed)") +
+  xlab("Time") +
+  ylab("Residual Maximum Delay")
+
+
+# compare the residuals against the original series:
+original_plot <- autoplot(daily_max_delay_ts) + 
+  ggtitle("Original Series") +
+  xlab("Time") +
+  ylab("Maximum Delay")
+
+residuals_plot <- autoplot(residuals_series) + 
+  ggtitle("Residuals") +
+  xlab("Time") +
+  ylab("Residual Maximum Delay")
+
+grid.arrange(original_plot, residuals_plot, ncol = 1)
+
+

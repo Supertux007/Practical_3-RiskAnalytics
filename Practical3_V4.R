@@ -6,6 +6,11 @@ library(ismev)
 library(tseries)
 library(extRemes)
 library(lubridate)
+library(fitdistrplus)
+library(gridExtra)
+library(kableExtra)
+library(evir)
+library(POT)
 
 # Import the data from our .csv
 american_airlines_data <- read.csv(here::here("flights_sample_3m_filtered.csv"))
@@ -18,8 +23,23 @@ daily_max_delay <- american_airlines_data %>%
   group_by(FL_DATE) %>%
   summarise(max_delay = max(DEP_DELAY, na.rm = TRUE))
 
+
+# Plot of the data
+ggplot(daily_max_delay, aes(x = FL_DATE, y = max_delay)) +
+  geom_line(color = "blue") +
+  labs(
+    title = "Daily Maximum Departure Delay",
+    x = "Year",
+    y = "Max Delay (minutes)"
+  ) +
+  theme_minimal()
+
+
 # Transform the dataframe into a time series
 daily_max_delay_ts <- ts(daily_max_delay$max_delay, frequency = 365)
+
+write.csv(daily_max_delay,file='C:/Users/steve/Desktop/Practical_3-RiskAnalytics/bla.csv')
+
 
 # Visualization of the time series (Change the legend y axis and values x axis)
 # Observation of trend lower between 2 and 3, higher after that with peak at 5
@@ -51,8 +71,9 @@ summary(fit_gamma)
 # Compare models using AIC (or BIC)
 AIC(fit_norm)
 AIC(fit_gamma)
-
 # gamma distribution fits the best our data on AIC and BIC it's very closed form the normal distribution
+
+
 
 
 # STL plot
@@ -143,8 +164,8 @@ ggplot() +
   geom_ribbon(data = predicted_data, aes(x = Year_Month_Continuous, ymin = lwr, ymax = upr), 
               fill = "grey80", alpha = 0.5) +
   labs(
-    title = "Weekly Maximum Delay with Linear Model Predictions",
-    x = "Year (Week Continuous)",
+    title = "Daily Maximum Delay with Linear Model Predictions",
+    x = "Year",
     y = "Maximum Delay (minutes)"
   ) +
   theme_minimal()
@@ -155,15 +176,14 @@ ggplot() +
 
 ################ GEV Model #####################
 
-
 # Fit the GEV model with constant parameters on our residual series
 gev_const <- fevd(as.numeric(residuals_df$residual), type = "GEV")
+
 
 # Show the result of the modelling
 plot(gev_const)
 
-
-# Extract summaries for both models
+# Extract summaries for the model
 summary_const <- summary(gev_const)
 
 # Extract AIC and BIC values
@@ -174,9 +194,6 @@ BIC_const <- summary_const$bic
 cat("Constant GEV Model - AIC:", AIC_const, "BIC:", BIC_const, "\n")
 
 
-
-
-
 ### Return level
 
 # Extract the GEV parameters
@@ -184,46 +201,51 @@ location <- gev_const$results$par[1]  # Location parameter
 scale <- gev_const$results$par[2]     # Scale parameter
 shape <- gev_const$results$par[3]     # Shape parameter
 
-# Define the return period in days (e.g., 1000 days)
-T <- 10  
+# Define the return period
+T_values <- c(1, 2, 5)  # In years
+T_days <- T_values * 365.25 # Reconvert into days for better interpretability
 
 # Calculate the return level using the GEV formula
-return_level_1000_day <- location + 
-  (scale / shape) * ((-log(1 - 1 / T))^shape - 1)
+return_levels <- sapply(T_days, function(T) {
+  if (shape != 0) {
+    location + (scale / shape) * ((-log(1 - 1 / T))^(-shape) - 1)
+  } else {
+    location - scale * log(-log(1 - 1 / T))
+  }
+})
+names(return_levels) <- paste0(T_values, "-year")
 
-# Get the last date in the observed data
-last_date <- max(daily_max_delay$FL_DATE)
+# reapply the trend and sesonal compenent to our series
+mean_trend <- mean(stl_result$time.series[, "trend"], na.rm = TRUE)
+mean_seasonal <- mean(stl_result$time.series[, "seasonal"], na.rm = TRUE)
 
-# Create a sequence of dates for the next 1000 days
-future_dates <- seq(from = last_date + 1, by = 1, length.out = 1000)
+return_levels_original_scale <- return_levels + mean_trend + mean_seasonal
 
-# Create a data frame for the future return levels
-return_levels <- data.frame(
-  Date = future_dates,                      # Future dates
-  Return_Level = rep(return_level_1000_day, length(future_dates))  # Same return level for all
+daily_max_delay$FL_DATE <- as.Date(daily_max_delay$FL_DATE, format = "%Y-%m-%d")
+
+# Create a sequence of dates matching the dataset
+date_range <- seq(from = min(daily_max_delay$FL_DATE), to = max(daily_max_delay$FL_DATE), by = "day")
+
+# Create a data frame with return levels for each T
+return_level_df <- data.frame(
+  Date = rep(date_range, times = length(T_values)),
+  Return_Level = unlist(lapply(return_levels_original_scale, rep, length(date_range))),
+  T = rep(paste0(T_values, "-year"), each = length(date_range))
 )
-
-residuals_df$FL_DATE <- as.Date(residuals_df$FL_DATE)
-
-# Combine observed data and return levels into one data frame if needed
-observed_data <- data.frame(
-  Date = residuals_df$FL_DATE,
-  Max_Delay_res = residuals_df$residual
-)
-
 
 ggplot() +
-  geom_point(data = observed_data, aes(x = Date, y = Max_Delay_res), color = "blue") +  # Plot observed data
-  geom_line(data = return_levels, aes(x = Date, y = Return_Level), color = "red", linetype = "dashed", size = 1) +  # Plot return levels
-  labs(
-    title = "10-Year Return Level for Maximum Delay",
-    x = "Date",
-    y = "Delay (min)"
+  geom_line(data = daily_max_delay, aes(x = FL_DATE, y = max_delay), color = "blue") +  # Observed delays
+  geom_hline(
+    yintercept = return_levels_original_scale, 
+    color = c("red", "green", "purple"), linetype = "dashed"
   ) +
-  theme_minimal() +
-  theme(legend.position = "none") +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
-
+  scale_color_manual(values = c("1-year" = "red", "2-year" = "green", "5-year" = "purple")) +
+  labs(
+    title = "Return Levels for Maximum Delays",
+    x = "Date",
+    y = "Delay (minutes)"
+  ) +
+  theme_minimal()
 
 
 
@@ -257,77 +279,123 @@ return_period
 
 
 
-#Using the fitted model, compute the probability that there will be a day in the next year when the precipitation exceeds 150 mm.
-# Parameters from the fitted GEV model
-mu <- gev_const$results$par["location"]  # Location parameter
-sigma <- gev_const$results$par["scale"]   # Scale parameter
-xi <- gev_const$results$par["shape"]      # Shape parameter
 
-# Specify the precipitation amount for which we want to calculate the probability
-Delay_threshold <- 1000
+# Define the thresholds in minutes
+thresholds <- c(500, 1000, 1500, 2000, 2500, 3000)
 
-# Calculate the CDF for the given amount using the GEV distribution
-if (xi != 0) {
-  # GEV with shape parameter not equal to 0
-  F_x <- exp(-((1 + (xi * (Delay_threshold - mu)) / sigma) ^ (-1 / xi)))
-} else {
-  # GEV with shape parameter equal to 0 (Gumbel distribution)
-  F_x <- exp(-exp(-(Delay_threshold - mu) / sigma))
+# Function to calculate the return period
+calculate_return_period <- function(threshold, mu, sigma, xi) {
+  if (xi != 0) {
+    F_x <- exp(-((1 + (xi * (threshold - mu)) / sigma) ^ (-1 / xi)))
+  } else {
+    F_x <- exp(-exp(-(threshold - mu) / sigma))
+  }
+  P_exceed <- 1 - F_x
+  return_period <- 1 / P_exceed
+  return(return_period)
 }
 
-# Calculate the probability of exceeding the specified precipitation amount
-D_exceed_1000 <- 1 - F_x
+#Calculate return periods for each threshold in days
+return_periods_days <- sapply(thresholds, calculate_return_period, mu = mu, sigma = sigma, xi = xi)
 
-# Calculate the probability of not exceeding 1000 min on all 365 period
-D_not_exceed_1000 <- F_x^52
-
-# Calculate the probability of at least one exceedance in the next year
-D_at_least_one_exceedance <- 1 - D_not_exceed_1000
-
-# Output the result
-D_at_least_one_exceedance
+# Convert return periods to years (1 year = 365.25 days)
+return_periods_years <- return_periods_days / 365.25
 
 
+# Create a data frame with the results and round the values
+return_period_df <- data.frame(
+  `Threshold (minutes)` = thresholds,
+  `Return Period (days)` = round(return_periods_days, 0), # Rounded to no decimal places
+  `Return Period (years)` = round(return_periods_years, 2) # Rounded to 2 decimal places
+)
 
 
+options(scipen = 999)
 
-
-
+# Generate a nice table using kableExtra
+return_period_df %>%
+  kable(format = "html", align = "c", col.names = c("Threshold (minutes)", "Return Period (days)", "Return Period (years)")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F) %>%
+  add_header_above(c(" " = 1, "Return Period Analysis" = 2)) %>%
+  save_kable("Return_Period_Table.html")
 
 
 
 
 ############ Peak over the threshold ######################
 
-
-# Extract the daily precipitation values
+# Extract the residuals for stationarity
 delay_Res <- residuals_df$residual
 
-# Generate the Mean Residual Life (MRL) plot
-mrlplot(delay_Res, main = "Mean Residual Life Plot for may delay")
+#Generate the Mean Residual Life (MRL) plot to determine the threshold
+mrlplot(delay_Res, main = "Mean Residual Life Plot for Delays (Residuals)")
 
-# Specify the threshold based on the MRL plot, here we choose 50
-threshold <- 1500
+#Define the threshold based on the MRL plot
+threshold <- 800
 
-# Create a new column in the data indicating whether the precipitation exceeds the threshold
-residuals_df$Exceeds_Threshold <- ifelse(delay > threshold, TRUE, FALSE)
+# Fit the Generalized Pareto Distribution (GPD) to exceedances
+exceedances <- delay_Res[delay_Res > threshold]  # Subtract threshold for GPD fitting
+fit_gpd <- fitgpd(exceedances, threshold = 800)
 
-# Plot the time series with highlighted exceedances
+# Set up a 2x2 plotting layout
+par(mfrow = c(2, 2))  # Set up a 2x2 plotting area
+
+# Generate the four diagnostic plots
+plot(fit_gpd)
+par(mfrow = c(1, 1))
+
+gpd_aic <- 2 * length(fit_gpd$par.ests) - 2 * fit_gpd$loglik
+
+summary(fit_gpd)
+
+# Visualize the time series with exceedances
+residuals_df$Exceeds_Threshold <- ifelse(delay_Res > threshold, TRUE, FALSE)
+
 ggplot(residuals_df, aes(x = FL_DATE, y = residual)) +
-  geom_line(color = "blue") +  # Regular precipitation values
+  geom_line(color = "blue") +  # Plot residuals
   geom_point(data = subset(residuals_df, Exceeds_Threshold == TRUE), aes(x = FL_DATE, y = residual), 
              color = "red", size = 1.5) +  # Highlight exceedances
-  labs(title = "Time Series of Daily Precipitation with Threshold Exceedances",
-       x = "Date", y = "Daily Precipitation (mm)") +
+  labs(title = "Time Series of Residual Delays with Threshold Exceedances",
+       x = "Date", y = "Residual Delay (min)") +
   theme_minimal()
 
+# Reapply the trend and seasonal components
+mean_trend <- mean(stl_result$time.series[, "trend"], na.rm = TRUE)
+mean_seasonal <- mean(stl_result$time.series[, "seasonal"], na.rm = TRUE)
+
+# Add the trend and seasonal components back to interpret return levels on the original scale
+return_levels_original <- function(levels_residual) {
+  return(levels_residual + mean_trend + mean_seasonal)
+}
+
+# Compute return levels for 1, 2, and 5 years
+T_values <- c(1, 2, 5)  # Return periods in years
+T_days <- T_values * 365.25  # Convert to days
+
+return_levels_residual <- sapply(T_days, function(T) {
+  if (fit_gpd$param["shape"] != 0) {
+    # General case for shape ≠ 0
+    fit_gpd$param["scale"] / fit_gpd$param["shape"] * 
+      (((1 - 1 / T)^(-fit_gpd$param["shape"])) - 1)
+  } else {
+    # Special case for shape = 0
+    fit_gpd$param["scale"] * log(T)
+  }
+})
+return_levels_original_scale <- return_levels_original(return_levels_residual)
+
+# Display the return levels
+data.frame(
+  `Return Period (Years)` = T_values,
+  `Return Level (Residuals)` = round(return_levels_residual, 2),
+  `Return Level (Original Scale)` = round(return_levels_original_scale, 2)
+)
 
 
+# Finir Le modèle GDP et faire les interprétations
 
 
-
-
-
+# Clustering and Seasonal Variations
 
 
 

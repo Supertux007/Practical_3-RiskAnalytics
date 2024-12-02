@@ -344,8 +344,7 @@ par(mfrow = c(2, 2))  # Set up a 2x2 plotting area
 plot(fit_gpd)
 par(mfrow = c(1, 1))
 
-gpd_aic <- 2 * length(fit_gpd$par.ests) - 2 * fit_gpd$loglik
-
+# Check the parameter of the fit_gdp model
 summary(fit_gpd)
 
 # Visualize the time series with exceedances
@@ -359,43 +358,168 @@ ggplot(residuals_df, aes(x = FL_DATE, y = residual)) +
        x = "Date", y = "Residual Delay (min)") +
   theme_minimal()
 
+
+# Extract values
+logLik <- fit_gpd$logLik  # Log-likelihood
+k <- 2                    # Number of parameters
+n <- fit_gpd$nat          # Number of exceedances (data points)
+
+# Calculate AIC and BIC
+aic <- 2 * k - 2 * logLik
+bic <- k * log(n) - 2 * logLik
+
+
 # Reapply the trend and seasonal components
 mean_trend <- mean(stl_result$time.series[, "trend"], na.rm = TRUE)
 mean_seasonal <- mean(stl_result$time.series[, "seasonal"], na.rm = TRUE)
+
+# get the paramter of our model
+scale <- fit_gpd$param["scale"]
+shape <- fit_gpd$param["shape"]
+threshold <- fit_gpd$threshold  # The threshold used in the GPD model
+
 
 # Add the trend and seasonal components back to interpret return levels on the original scale
 return_levels_original <- function(levels_residual) {
   return(levels_residual + mean_trend + mean_seasonal)
 }
 
-# Compute return levels for 1, 2, and 5 years
-T_values <- c(1, 2, 5)  # Return periods in years
-T_days <- T_values * 365.25  # Convert to days
 
-return_levels_residual <- sapply(T_days, function(T) {
-  if (fit_gpd$param["shape"] != 0) {
-    # General case for shape ≠ 0
-    fit_gpd$param["scale"] / fit_gpd$param["shape"] * 
-      (((1 - 1 / T)^(-fit_gpd$param["shape"])) - 1)
-  } else {
-    # Special case for shape = 0
-    fit_gpd$param["scale"] * log(T)
-  }
+# Define the return periods
+return_periods <- c(1, 3, 5, 10)
+
+# Parameter setup
+total_years <- length(unique(format(daily_max_delay$FL_DATE, "%Y")))
+num_exceedances <- length(fit_gpd$data)
+lambda <- num_exceedances / total_years
+
+# Calculate return levels for each return period
+return_levels <- sapply(return_periods, function(T) {
+  threshold + (scale / shape) * (((T * lambda) ^ shape) - 1)
 })
-return_levels_original_scale <- return_levels_original(return_levels_residual)
 
-# Display the return levels
-data.frame(
-  `Return Period (Years)` = T_values,
-  `Return Level (Residuals)` = round(return_levels_residual, 2),
-  `Return Level (Original Scale)` = round(return_levels_original_scale, 2)
+return_levels_original_scale <- return_levels_original(return_levels)
+
+
+# Return levels as a dataframe
+return_levels_df <- data.frame(
+  "Return Period (Years)" = return_periods,
+  "Return Level (Residuals)" = return_levels,
+  "Return Level (Original Scale)" = return_levels_original_scale
+)
+# Print the results
+
+print(return_levels_df)
+
+# Create a dataframe for plotting
+return_levels_plot <- data.frame(
+  "Return Period" = return_periods,
+  "Return Level" = return_levels_original_scale
 )
 
+# Plot return levels as a curve
+ggplot(return_levels_plot, aes(x = return_periods, y = return_levels_original_scale)) +
+  geom_line(color = "red", size = 1) +
+  geom_point(size = 3, color = "blue") +
+  labs(
+    title = "Return Levels for Maximum Delays",
+    x = "Return Period (Years)",
+    y = "Return Level (Minutes)"
+  ) +
+  theme_minimal()
 
-# Finir Le modèle GDP et faire les interprétations
+# Combine observed data and return levels
+observed_data <- data.frame(
+  Date = daily_max_delay$FL_DATE,
+  Delay = daily_max_delay$max_delay
+)
+
+ggplot() +
+  geom_line(data = observed_data, aes(x = Date, y = Delay), color = "blue") +  # Observed data
+  geom_hline(
+    data = return_levels_plot, aes(yintercept = return_levels_original_scale, color = factor(return_periods)),
+    linetype = "dashed"
+  ) +
+  scale_color_manual(name = "Return Period", values = c("red", "green", "purple", "orange")) +
+  labs(
+    title = "Observed Data and Return Levels",
+    x = "Date",
+    y = "Delay (Minutes)"
+  ) +
+  theme_minimal()
 
 
-# Clustering and Seasonal Variations
+# Create a nicely formatted table
+return_levels_plot %>%
+  kbl(
+    caption = "Return Levels for Maximum Delays",
+    col.names = c("Return Period (Years)", "Return Level (Minutes)"),
+    digits = 2,  # Round to 2 decimal places
+    align = "c"  # Center align columns
+  ) %>%
+  kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "hover", "condensed", "responsive")
+  ) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#2C3E50") %>%
+  column_spec(1, bold = TRUE) %>%
+  column_spec(2, color = "darkblue")
+
+###################### Clustering and Seasonal Variations ##############################
+
+# Reset the threshold as we defined before
+threshold = 800
+
+# Check for clustering of extremes
+extremal_index <- extremalindex(daily_max_delay$max_delay, threshold = threshold)
+cat("Extremal Index:", extremal_index, "\n")
+
+# Declustering
+declustered_data <- extRemes::decluster(daily_max_delay$max_delay, threshold = 800)
+
+declustered_data_cleaned <- declustered_data[declustered_data > threshold]
+
+# Convert to a data frame for plotting
+declustered_df <- data.frame(
+  Index = seq_along(declustered_data_cleaned),
+  Max_Delay = declustered_data_cleaned
+)
+
+# Plot declustered data
+
+ggplot(declustered_df, aes(x = Index, y = Max_Delay)) +
+  geom_point(color = "blue") +
+  geom_hline(yintercept = threshold, linetype = "dashed", color = "red") +
+  labs(
+    title = "Declustered Daily Maximum Delays",
+    x = "Index",
+    y = "Maximum Delay (Minutes)"
+  ) +
+  theme_minimal()
 
 
+extreme_days <- daily_max_delay$max_delay > threshold
+
+# Calculate the probability
+n_extreme_today <- sum(extreme_days[-length(extreme_days)])  # excluding the last day to avoid NA
+n_both_extreme <- sum(extreme_days[-1] & extreme_days[-length(extreme_days)])  # tomorrow also extreme
+
+if (n_extreme_today > 0) {
+  probability_both_extreme <- n_both_extreme / n_extreme_today
+} else {
+  probability_both_extreme <- NA  # Avoid division by zero if no extremes today
+}
+
+# Print the probability
+print(paste("Probability that tomorrow is also extreme given today is extreme:", probability_both_extreme))
+
+
+extreme_consecutive <- data.frame(
+  Today_Extreme = extreme_days[-length(extreme_days)],
+  Tomorrow_Extreme = extreme_days[-1]
+)
+
+ggplot(extreme_consecutive, aes(x = Today_Extreme, y = Tomorrow_Extreme)) +
+  geom_jitter(width = 0.2, height = 0.2, alpha = 0.6) +
+  labs(title = "Consecutive Extreme Events", x = "Today Extreme", y = "Tomorrow Extreme")
 
